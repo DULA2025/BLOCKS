@@ -24,20 +24,7 @@ Score Display: Points are displayed below the canvas in dark yellow.
 
 Installation
 
-Clone the Repository:
-git clone https://github.com/your-username/bejeweled-match3-game.git
-cd bejeweled-match3-game
-
-
-Host the Game:
-
-The game requires no external assets (e.g., audio files), so you can open index.html directly in a browser:open index.html
-
-
-Alternatively, host it on a local server to ensure optimal performance (recommended):python -m http.server
-
-Then access http://localhost:8000 in your browser.
-
+copy index.html from (https://github.com/DULA2025/BLOCKS/index.html) open in browswer and play.
 
 
 How to Play
