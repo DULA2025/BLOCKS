@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bejeweled-Style Match-3 Game</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #2e1e3d;
+        }
+        canvas {
+            border: 2px solid #fff;
+        }
+        #score-container {
+            margin-top: 10px;
+            font-size: 24px;
+            color: #FFC107;
+            font-family: Arial, sans-serif;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
+</head>
+<body>
+    <div id="score-container">Score: 0</div>
+    <script>
+        const config = {
+            type: Phaser.AUTO,
+            width: 640,
+            height: 640,
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        const game = new Phaser.Game(config);
+
+        const GRID_SIZE = 10;
+        const TILE_SIZE = 64;
+        const GEM_TYPES = ['red', 'blue', 'green', 'yellow', 'purple'];
+        const GEM_COLORS = {
+            red: 0xff0000,
+            blue: 0x0000ff,
+            green: 0x00ff00,
+            yellow: 0xffff00,
+            purple: 0x800080
+        };
+        let board = [];
+        let selectedGem = null;
+        let score = 0;
+        let scoreText;
+        let isProcessing = false;
+        let particles;
+
+        // Initialize Web Audio API
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Function to generate a simple beep sound (for swap)
+        function playSwapSound() {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'sine'; // Sine wave for a clean beep
+            oscillator.frequency.setValueAtTime(800, audioContext.currentTime); // High-pitched beep (800 Hz)
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            gainNode.gain.setValueAtTime(0.5, audioContext.currentTime); // Volume
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1); // Short beep (0.1 seconds)
+        }
+
+        // Function to generate an ascending tone (for match)
+        function playMatchSound() {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'triangle'; // Triangle wave for a softer tone
+            oscillator.frequency.setValueAtTime(400, audioContext.currentTime); // Start at 400 Hz
+            oscillator.frequency.linearRampToValueAtTime(600, audioContext.currentTime + 0.3); // Ascend to 600 Hz
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            gainNode.gain.setValueAtTime(0.5, audioContext.currentTime); // Volume
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.3); // 0.3 seconds
+        }
+
+        // Function to generate a burst sound (for explosion)
+        function playExplosionSound() {
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+
+            oscillator.type = 'sawtooth'; // Sawtooth wave for a rougher burst
+            oscillator.frequency.setValueAtTime(200, audioContext.currentTime); // Low frequency (200 Hz)
+            oscillator.frequency.exponentialRampToValueAtTime(50, audioContext.currentTime + 0.2); // Drop to 50 Hz
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+
+            gainNode.gain.setValueAtTime(0.5, audioContext.currentTime); // Volume
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2); // Fade out
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2); // 0.2 seconds
+        }
+
+        function preload() {
+            // Generate textures for each gem type as 3D-effect colored squares with solid interior color
+            GEM_TYPES.forEach(type => {
+                const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+
+                // Use a solid fill color for the inside of the square
+                graphics.fillStyle(GEM_COLORS[type], 1);
+                graphics.fillRect(0, 0, TILE_SIZE - 4, TILE_SIZE - 4);
+
+                // Add a bevel effect with lighter and darker borders
+                graphics.lineStyle(2, Phaser.Display.Color.ValueToColor(GEM_COLORS[type]).lighten(20).color, 1);
+                graphics.lineBetween(0, 0, TILE_SIZE - 4, 0); // Top border (lighter)
+                graphics.lineBetween(0, 0, 0, TILE_SIZE - 4); // Left border (lighter)
+
+                graphics.lineStyle(2, Phaser.Display.Color.ValueToColor(GEM_COLORS[type]).darken(30).color, 1);
+                graphics.lineBetween(TILE_SIZE - 4, 0, TILE_SIZE - 4, TILE_SIZE - 4); // Right border (darker)
+                graphics.lineBetween(0, TILE_SIZE - 4, TILE_SIZE - 4, TILE_SIZE - 4); // Bottom border (darker)
+
+                // Add a subtle shadow effect by drawing a semi-transparent rectangle
+                graphics.fillStyle(0x000000, 0.3);
+                graphics.fillRect(4, 4, TILE_SIZE - 8, TILE_SIZE - 8);
+
+                graphics.generateTexture(type, TILE_SIZE - 4, TILE_SIZE - 4);
+            });
+
+            // Create a particle texture for the explosion effect
+            const particleGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+            particleGraphics.fillStyle(0xffffff, 1);
+            particleGraphics.fillCircle(4, 4, 4);
+            particleGraphics.generateTexture('particle', 8, 8);
+
+            // No external audio files are loaded; sounds are generated using Web Audio API
+        }
+
+        function create() {
+            // Initialize scoreText first
+            scoreText = document.getElementById('score-container');
+
+            // Initialize particle system for explosion effect
+            particles = this.add.particles(0, 0, 'particle', {
+                speed: { min: 50, max: 100 },
+                angle: { min: 0, max: 360 },
+                scale: { start: 0.5, end: 0 },
+                alpha: { start: 1, end: 0 },
+                lifespan: { min: 200, max: 400 },
+                blendMode: 'ADD',
+                quantity: 10,
+                emitZone: { type: 'random', source: new Phaser.Geom.Circle(0, 0, 10) },
+                on: false
+            });
+
+            // Initialize the board
+            for (let row = 0; row < GRID_SIZE; row++) {
+                board[row] = [];
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    let gemType = Phaser.Math.RND.pick(GEM_TYPES);
+                    let gem = this.add.sprite(col * TILE_SIZE + TILE_SIZE / 2, row * TILE_SIZE + TILE_SIZE / 2, gemType);
+                    gem.setInteractive();
+                    gem.setData('row', row);
+                    gem.setData('col', col);
+                    gem.setData('type', gemType);
+                    board[row][col] = gem;
+                }
+            }
+
+            // Ensure no matches on start
+            resolveMatches.call(this, true);
+
+            // Input handling
+            this.input.on('gameobjectdown', onGemClicked, this);
+        }
+
+        function update() {
+            if (!isProcessing) {
+                resolveMatches.call(this);
+            }
+        }
+
+        function onGemClicked(pointer, gem) {
+            if (isProcessing) return;
+
+            if (!selectedGem) {
+                // First gem selected
+                selectedGem = gem;
+                selectedGem.setScale(1.2); // Highlight selected gem
+            } else if (selectedGem === gem) {
+                // Deselect if clicking the same gem
+                selectedGem.setScale(1);
+                selectedGem = null;
+            } else {
+                // Second gem selected, check if adjacent
+                let row1 = selectedGem.getData('row');
+                let col1 = selectedGem.getData('col');
+                let row2 = gem.getData('row');
+                let col2 = gem.getData('col');
+
+                if (Math.abs(row1 - row2) + Math.abs(col1 - col2) === 1) {
+                    // Adjacent gems, swap them
+                    swapGems.call(this, row1, col1, row2, col2);
+                }
+
+                // Reset selection
+                selectedGem.setScale(1);
+                selectedGem = null;
+            }
+        }
+
+        function swapGems(row1, col1, row2, col2) {
+            isProcessing = true;
+
+            let gem1 = board[row1][col1];
+            let gem2 = board[row2][col2];
+
+            // Play swap sound (generated beep)
+            playSwapSound();
+
+            // Update board data
+            board[row1][col1] = gem2;
+            board[row2][col2] = gem1;
+
+            // Update gem positions
+            gem1.setData('row', row2);
+            gem1.setData('col', col2);
+            gem2.setData('row', row1);
+            gem2.setData('col', col1);
+
+            // Animate the swap
+            this.tweens.add({
+                targets: gem1,
+                x: col2 * TILE_SIZE + TILE_SIZE / 2,
+                y: row2 * TILE_SIZE + TILE_SIZE / 2,
+                duration: 200,
+                ease: 'Linear'
+            });
+
+            this.tweens.add({
+                targets: gem2,
+                x: col1 * TILE_SIZE + TILE_SIZE / 2,
+                y: row1 * TILE_SIZE + TILE_SIZE / 2,
+                duration: 200,
+                ease: 'Linear',
+                onComplete: () => {
+                    // Check if the swap creates a match
+                    if (!checkMatches.call(this)) {
+                        // No match, swap back
+                        playSwapSound(); // Play swap sound again for the swap back
+                        this.tweens.add({
+                            targets: gem1,
+                            x: col1 * TILE_SIZE + TILE_SIZE / 2,
+                            y: row1 * TILE_SIZE + TILE_SIZE / 2,
+                            duration: 200,
+                            ease: 'Linear'
+                        });
+                        this.tweens.add({
+                            targets: gem2,
+                            x: col2 * TILE_SIZE + TILE_SIZE / 2,
+                            y: row2 * TILE_SIZE + TILE_SIZE / 2,
+                            duration: 200,
+                            ease: 'Linear',
+                            onComplete: () => {
+                                // Swap back the board data
+                                board[row1][col1] = gem1;
+                                board[row2][col2] = gem2;
+                                gem1.setData('row', row1);
+                                gem1.setData('col', col1);
+                                gem2.setData('row', row2);
+                                gem2.setData('col', col2);
+                                isProcessing = false;
+                            }
+                        });
+                    } else {
+                        // Proceed with match resolution
+                        resolveMatches.call(this);
+                    }
+                }
+            });
+        }
+
+        function checkMatches() {
+            let matchesFound = false;
+
+            // Check horizontal matches
+            for (let row = 0; row < GRID_SIZE; row++) {
+                let count = 1;
+                let startCol = 0;
+                for (let col = 1; col < GRID_SIZE; col++) {
+                    if (!board[row][col] || !board[row][col - 1]) {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            for (let c = startCol; c < startCol + count; c++) {
+                                if (board[row][c]) {
+                                    board[row][c].setData('matched', true);
+                                }
+                            }
+                        }
+                        count = 1;
+                        startCol = col;
+                        continue;
+                    }
+
+                    if (board[row][col].getData('type') === board[row][col - 1].getData('type')) {
+                        count++;
+                    } else {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            for (let c = startCol; c < startCol + count; c++) {
+                                if (board[row][c]) {
+                                    board[row][c].setData('matched', true);
+                                }
+                            }
+                        }
+                        count = 1;
+                        startCol = col;
+                    }
+                }
+                if (count >= 3) {
+                    matchesFound = true;
+                    for (let c = startCol; c < startCol + count; c++) {
+                        if (board[row][c]) {
+                            board[row][c].setData('matched', true);
+                        }
+                    }
+                }
+            }
+
+            // Check vertical matches
+            for (let col = 0; col < GRID_SIZE; col++) {
+                let count = 1;
+                let startRow = 0;
+                for (let row = 1; row < GRID_SIZE; row++) {
+                    if (!board[row][col] || !board[row - 1][col]) {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            for (let r = startRow; r < startRow + count; r++) {
+                                if (board[r][col]) {
+                                    board[r][col].setData('matched', true);
+                                }
+                            }
+                        }
+                        count = 1;
+                        startRow = row;
+                        continue;
+                    }
+
+                    if (board[row][col].getData('type') === board[row - 1][col].getData('type')) {
+                        count++;
+                    } else {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            for (let r = startRow; r < startRow + count; r++) {
+                                if (board[r][col]) {
+                                    board[r][col].setData('matched', true);
+                                }
+                            }
+                        }
+                        count = 1;
+                        startRow = row;
+                    }
+                }
+                if (count >= 3) {
+                    matchesFound = true;
+                    for (let r = startRow; r < startRow + count; r++) {
+                        if (board[r][col]) {
+                            board[r][col].setData('matched', true);
+                        }
+                    }
+                }
+            }
+
+            return matchesFound;
+        }
+
+        function resolveMatches(initial = false) {
+            let matchesFound = checkMatches.call(this);
+
+            if (!matchesFound && !initial) {
+                isProcessing = false;
+                return;
+            }
+
+            // Play match sound if there are matches
+            if (matchesFound) {
+                playMatchSound();
+            }
+
+            // Trigger explosion effect for matched gems
+            for (let row = 0; row < GRID_SIZE; row++) {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    let gem = board[row][col];
+                    if (gem && gem.getData('matched')) {
+                        particles.emitParticleAt(gem.x, gem.y, 10);
+                        playExplosionSound();
+                    }
+                }
+            }
+
+            // Remove matched gems
+            for (let row = 0; row < GRID_SIZE; row++) {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    let gem = board[row][col];
+                    if (gem && gem.getData('matched')) {
+                        this.tweens.add({
+                            targets: gem,
+                            scale: 0,
+                            alpha: 0,
+                            duration: 200,
+                            ease: 'Power2',
+                            onComplete: () => {
+                                gem.destroy();
+                            }
+                        });
+                        score += 10;
+                        scoreText.innerText = 'Score: ' + score;
+                        board[row][col] = null;
+                    }
+                }
+            }
+
+            // Let gems fall
+            this.time.delayedCall(300, () => {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    let emptySpaces = 0;
+                    for (let row = GRID_SIZE - 1; row >= 0; row--) {
+                        if (!board[row][col]) {
+                            emptySpaces++;
+                        } else if (emptySpaces > 0) {
+                            let gem = board[row][col];
+                            board[row + emptySpaces][col] = gem;
+                            board[row][col] = null;
+                            gem.setData('row', row + emptySpaces);
+                            this.tweens.add({
+                                targets: gem,
+                                y: (row + emptySpaces) * TILE_SIZE + TILE_SIZE / 2,
+                                duration: 200,
+                                ease: 'Linear'
+                            });
+                        }
+                    }
+
+                    // Fill empty spaces at the top
+                    for (let i = 0; i < emptySpaces; i++) {
+                        let row = emptySpaces - 1 - i;
+                        let gemType = Phaser.Math.RND.pick(GEM_TYPES);
+                        let gem = this.add.sprite(col * TILE_SIZE + TILE_SIZE / 2, -TILE_SIZE, gemType);
+                        gem.setInteractive();
+                        gem.setData('row', row);
+                        gem.setData('col', col);
+                        gem.setData('type', gemType);
+                        board[row][col] = gem;
+                        this.tweens.add({
+                            targets: gem,
+                            y: row * TILE_SIZE + TILE_SIZE / 2,
+                            duration: 200,
+                            ease: 'Linear'
+                        });
+                    }
+                }
+
+                // Check for new matches after the board is fully updated
+                this.time.delayedCall(300, () => {
+                    if (checkMatches.call(this)) {
+                        resolveMatches.call(this);
+                    } else {
+                        isProcessing = false;
+                    }
+                });
+            });
+        }
+    </script>
+</body>
+</html>
