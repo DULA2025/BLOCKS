@@ -1,0 +1,1237 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cosmic Crystals: Match-3 Adventure</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: radial-gradient(circle, #1a0b2e, #2e1e3d);
+            font-family: 'Segoe UI', Arial, sans-serif;
+            overflow: hidden;
+        }
+        canvas {
+            border: 4px solid #fff;
+            border-radius: 15px;
+            box-shadow: 0 0 30px rgba(255, 255, 255, 0.5);
+            display: none;
+        }
+        #ui-container {
+            display: none;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+            width: 640px;
+            margin-bottom: 15px;
+            color: #FFD700;
+            font-size: 24px;
+            text-shadow: 0 0 5px #FFD700;
+        }
+        #mode-selector, #mute-button {
+            cursor: pointer;
+            padding: 5px 10px;
+            background: #FFD700;
+            color: #2e1e3d;
+            border-radius: 5px;
+            font-size: 18px;
+            margin-left: 10px;
+        }
+        #mode-selector:hover, #mute-button:hover {
+            background: #FFA500;
+        }
+        #progress-bar {
+            width: 200px;
+            height: 20px;
+            background: #333;
+            border: 2px solid #FFD700;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        #progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #FFD700, #FFA500);
+            transition: width 0.5s ease;
+        }
+        #game-over, #start-screen, #achievements-screen, #tutorial-screen {
+            display: none;
+            position: absolute;
+            background: rgba(0, 0, 0, 0.9);
+            color: #FFD700;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            font-size: 36px;
+            text-shadow: 0 0 10px #FFD700;
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+        }
+        #game-over button, #start-screen button, #achievements-screen button, #tutorial-screen button {
+            margin: 20px;
+            padding: 10px 30px;
+            font-size: 24px;
+            background: #FFD700;
+            color: #2e1e3d;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        #game-over button:hover, #start-screen button:hover, #achievements-screen button:hover, #tutorial-screen button:hover {
+            background: #FFA500;
+        }
+        #combo-text {
+            position: absolute;
+            color: #FF4500;
+            font-size: 48px;
+            text-shadow: 0 0 10px #FF4500;
+            pointer-events: none;
+            display: none;
+        }
+        #achievements-list, #high-scores {
+            font-size: 20px;
+            margin-top: 20px;
+            color: #fff;
+        }
+        #tutorial-screen p {
+            font-size: 20px;
+            margin: 20px;
+            color: #fff;
+        }
+        #fade-overlay {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: black;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.5s;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/phaser/3.80.1/phaser.min.js"></script>
+</head>
+<body>
+    <div id="fade-overlay"></div>
+    <div id="start-screen">
+        <div>Cosmic Crystals</div>
+        <button onclick="startGame('classic')">Classic Mode</button>
+        <button onclick="startGame('zen')">Zen Mode</button>
+        <button onclick="showAchievements()">Achievements</button>
+    </div>
+    <div id="ui-container">
+        <span id="score-container">Score: 0</span>
+        <div id="progress-bar"><div id="progress-fill" style="width: 0%"></div></div>
+        <span id="level-container">Level: 1</span>
+        <span id="time-container">Time: 60</span>
+        <span id="mode-selector">Mode: Classic</span>
+        <span id="mute-button">🔊</span>
+    </div>
+    <div id="game-over">
+        <div>Game Over!</div>
+        <div id="final-score">Final Score: 0</div>
+        <div id="high-scores"></div>
+        <button onclick="restartGame()">Restart</button>
+        <button onclick="showStartScreen()">Main Menu</button>
+    </div>
+    <div id="achievements-screen">
+        <div>Achievements</div>
+        <div id="achievements-list"></div>
+        <button onclick="showStartScreen()">Back</button>
+    </div>
+    <div id="tutorial-screen">
+        <div>Welcome to Cosmic Crystals!</div>
+        <p>Swap adjacent gems to match 3 or more. Create special gems with bigger matches! In Classic mode, reach score goals before time runs out. In Zen mode, play endlessly!</p>
+        <button onclick="startGameFromTutorial()">Start</button>
+    </div>
+    <div id="combo-text"></div>
+    <script>
+        const config = {
+            type: Phaser.AUTO,
+            width: 640,
+            height: 640,
+            scene: {
+                preload: preload,
+                create: create,
+                update: update
+            }
+        };
+
+        let game;
+        const GRID_SIZE = 10;
+        const TILE_SIZE = 64;
+        const GEM_TYPES = ['red', 'blue', 'green', 'yellow', 'purple'];
+        const SPECIAL_GEMS = ['star', 'rainbow', 'bomb', 'timewarp'];
+        const GEM_COLORS = {
+            red: 0xff0000,
+            blue: 0x0000ff,
+            green: 0x00ff00,
+            yellow: 0xffff00,
+            purple: 0x800080,
+            star: 0xFFD700,
+            rainbow: 0xFFFFFF,
+            bomb: 0xFF4500,
+            timewarp: 0x00FFFF
+        };
+        let board = [];
+        let selectedGem = null;
+        let score = 0;
+        let level = 1;
+        let timeLeft = 60;
+        let scoreText, levelText, timeText, modeText, comboText;
+        let isProcessing = false;
+        let particles, glowParticles;
+        let comboCount = 0;
+        let gameOver = false;
+        let gameMode = 'classic';
+        let isMuted = false;
+        let backgroundMusicInterval;
+        let highScores = JSON.parse(localStorage.getItem('highScores')) || [];
+        let achievements = {
+            firstMatch: { name: 'First Spark', description: 'Make your first match', unlocked: false },
+            highScore: { name: 'Cosmic Score', description: 'Reach 5000 points', unlocked: false },
+            bigCombo: { name: 'Combo Master', description: 'Get a 5x combo', unlocked: false },
+            timeMaster: { name: 'Time Lord', description: 'Use a Time Warp gem', unlocked: false }
+        };
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Sound System
+        function playSound(frequency, type, duration, volume = 0.4, detune = 0) {
+            if (isMuted) return;
+            try {
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+                oscillator.type = type;
+                oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+                oscillator.detune.setValueAtTime(detune, audioContext.currentTime);
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+                gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + duration * 0.9);
+                oscillator.start();
+                oscillator.stop(audioContext.currentTime + duration);
+            } catch (error) {
+                console.error('Error in playSound:', error);
+            }
+        }
+
+        function playSwapSound() {
+            playSound(1200, 'sine', 0.1, 0.3);
+            playSound(1400, 'sine', 0.1, 0.2, 100);
+        }
+
+        function playMatchSound(combo) {
+            playSound(600 + combo * 150, 'triangle', 0.3, 0.5);
+            playSound(800 + combo * 150, 'triangle', 0.3, 0.3, 200);
+        }
+
+        function playExplosionSound() {
+            playSound(800, 'sine', 0.15, 0.4);
+            setTimeout(() => playSound(1000, 'sine', 0.15, 0.3, 100), 50);
+        }
+
+        function playLevelUpSound() {
+            playSound(1000, 'sine', 0.4, 0.6);
+            setTimeout(() => playSound(1200, 'sine', 0.4, 0.5, 100), 150);
+            setTimeout(() => playSound(1400, 'sine', 0.4, 0.4, 200), 300);
+        }
+
+        function playSpecialSound() {
+            playSound(1500, 'square', 0.5, 0.6);
+            playSound(1600, 'square', 0.5, 0.5, 300);
+        }
+
+        function playBackgroundMusic() {
+            if (isMuted || backgroundMusicInterval) return;
+            // Soft, calming melody in C major (C4, E4, G4, A4, F4, D4)
+            // Frequencies (Hz): C4=261.63, E4=329.63, G4=392.00, A4=440.00, F4=349.23, D4=293.66
+            const melodyNotes = [
+                261.63, 329.63, 392.00, 440.00, 392.00, 329.63, // Phrase 1
+                261.63, 293.66, 349.23, 440.00, 392.00, 329.63, // Phrase 2
+                392.00, 440.00, 392.00, 329.63, 261.63, 293.66, // Phrase 3
+                349.23, 392.00, 440.00, 261.63, 329.63, 392.00, // Phrase 4
+                440.00, 349.23, 293.66, 261.63 // Phrase 5
+            ];
+            const melodyDurations = [
+                0.4, 0.4, 0.4, 0.8, 0.4, 0.4, // Phrase 1
+                0.4, 0.4, 0.4, 0.8, 0.4, 0.4, // Phrase 2
+                0.4, 0.4, 0.4, 0.4, 0.8, 0.4, // Phrase 3
+                0.4, 0.4, 0.8, 0.4, 0.4, 0.4, // Phrase 4
+                0.8, 0.4, 0.4, 0.8 // Phrase 5
+            ];
+            const bassNotes = [
+                130.81, 130.81, 130.81, 130.81, // C3
+                164.81, 164.81, 164.81, 164.81, // E3
+                196.00, 196.00, 196.00, 196.00, // G3
+                146.83, 146.83, 146.83, 146.83, // D3
+                130.81, 130.81, 130.81, 130.81 // C3
+            ];
+            const bassDurations = [
+                0.8, 0.8, 0.8, 0.8,
+                0.8, 0.8, 0.8, 0.8,
+                0.8, 0.8, 0.8, 0.8,
+                0.8, 0.8, 0.8, 0.8,
+                0.8, 0.8, 0.8, 0.8
+            ];
+            let noteIndex = 0;
+
+            backgroundMusicInterval = setInterval(() => {
+                if (!isMuted) {
+                    const melodyFreq = melodyNotes[noteIndex] * (1 + level * 0.03);
+                    const bassFreq = bassNotes[noteIndex % bassNotes.length];
+                    playSound(melodyFreq, 'sine', melodyDurations[noteIndex], 0.08, 5); // Softer, smoother melody
+                    playSound(bassFreq, 'sine', bassDurations[noteIndex % bassDurations.length], 0.05); // Softer bass
+                    noteIndex = (noteIndex + 1) % melodyNotes.length;
+                }
+            }, 350);
+        }
+
+        function stopBackgroundMusic() {
+            if (backgroundMusicInterval) {
+                clearInterval(backgroundMusicInterval);
+                backgroundMusicInterval = null;
+            }
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            const muteButton = document.getElementById('mute-button');
+            if (muteButton) muteButton.textContent = isMuted ? '🔇' : '🔊';
+            else console.error('Mute button not found');
+            if (isMuted) stopBackgroundMusic();
+            else playBackgroundMusic();
+        }
+
+        // UI and Game State
+        function fadeScreen(callback) {
+            const overlay = document.getElementById('fade-overlay');
+            if (!overlay) {
+                console.error('Fade overlay not found');
+                callback();
+                return;
+            }
+            overlay.style.opacity = '1';
+            setTimeout(() => {
+                callback();
+                setTimeout(() => {
+                    overlay.style.opacity = '0';
+                }, 100);
+            }, 500);
+        }
+
+        function showStartScreen() {
+            fadeScreen(() => {
+                stopBackgroundMusic();
+                audioContext.suspend();
+                if (game) {
+                    game.destroy(true);
+                    game = null;
+                    document.querySelectorAll('canvas').forEach(canvas => canvas.remove());
+                }
+                const startScreen = document.getElementById('start-screen');
+                const gameOverScreen = document.getElementById('game-over');
+                const achievementsScreen = document.getElementById('achievements-screen');
+                const tutorialScreen = document.getElementById('tutorial-screen');
+                const uiContainer = document.getElementById('ui-container');
+                const comboTextElement = document.getElementById('combo-text');
+                if (startScreen) startScreen.style.display = 'block';
+                else console.error('Start screen not found');
+                if (gameOverScreen) gameOverScreen.style.display = 'none';
+                if (achievementsScreen) achievementsScreen.style.display = 'none';
+                if (tutorialScreen) tutorialScreen.style.display = 'block';
+                if (uiContainer) uiContainer.style.display = 'none';
+                if (comboTextElement) comboTextElement.style.display = 'none';
+            });
+        }
+
+        function showAchievements() {
+            const startScreen = document.getElementById('start-screen');
+            const tutorialScreen = document.getElementById('tutorial-screen');
+            const achievementsScreen = document.getElementById('achievements-screen');
+            if (startScreen) startScreen.style.display = 'none';
+            else console.error('Start screen not found');
+            if (tutorialScreen) tutorialScreen.style.display = 'none';
+            else console.error('Tutorial screen not found');
+            if (achievementsScreen) {
+                achievementsScreen.style.display = 'block';
+                const achievementsList = document.getElementById('achievements-list');
+                if (achievementsList) {
+                    achievementsList.innerHTML = Object.values(achievements).map(a => 
+                        `<div>${a.name}: ${a.description} - ${a.unlocked ? 'Unlocked' : 'Locked'}</div>`
+                    ).join('');
+                } else {
+                    console.error('Achievements list not found');
+                }
+            } else {
+                console.error('Achievements screen not found');
+            }
+        }
+
+        function startGame(mode) {
+            fadeScreen(() => {
+                try {
+                    gameMode = mode;
+                    const startScreen = document.getElementById('start-screen');
+                    const tutorialScreen = document.getElementById('tutorial-screen');
+                    const uiContainer = document.getElementById('ui-container');
+                    const modeSelector = document.getElementById('mode-selector');
+                    const progressFill = document.getElementById('progress-fill');
+                    if (startScreen) startScreen.style.display = 'none';
+                    else console.error('Start screen not found');
+                    if (tutorialScreen) tutorialScreen.style.display = 'none';
+                    else console.error('Tutorial screen not found');
+                    if (uiContainer) uiContainer.style.display = 'flex';
+                    else console.error('UI container not found');
+                    score = 0;
+                    level = 1;
+                    timeLeft = gameMode === 'classic' ? 60 : Infinity;
+                    gameOver = false;
+                    isMuted = false;
+                    const muteButton = document.getElementById('mute-button');
+                    if (muteButton) muteButton.textContent = '🔊';
+                    else console.error('Mute button not found');
+                    audioContext.resume();
+                    if (game) {
+                        game.destroy(true);
+                        document.querySelectorAll('canvas').forEach(canvas => canvas.remove());
+                    }
+                    game = new Phaser.Game(config);
+                    if (modeSelector) modeSelector.textContent = `Mode: ${mode.charAt(0).toUpperCase() + mode.slice(1)}`;
+                    else console.error('Mode selector not found');
+                    if (progressFill) progressFill.style.width = '0%';
+                    else console.error('Progress fill not found');
+                } catch (error) {
+                    console.error('Error starting game:', error, error.stack);
+                }
+            });
+        }
+
+        function startGameFromTutorial() {
+            startGame(gameMode);
+        }
+
+        window.restartGame = function() {
+            startGame(gameMode);
+            const gameOverScreen = document.getElementById('game-over');
+            if (gameOverScreen) gameOverScreen.style.display = 'none';
+            else console.error('Game over screen not found');
+        }
+
+        window.startGame = startGame;
+        window.showAchievements = showAchievements;
+        window.showStartScreen = showStartScreen;
+        window.startGameFromTutorial = startGameFromTutorial;
+
+        function updateAchievements() {
+            if (score >= 5000 && !achievements.highScore.unlocked) {
+                achievements.highScore.unlocked = true;
+                showAchievement('Cosmic Score');
+            }
+            if (comboCount >= 5 && !achievements.bigCombo.unlocked) {
+                achievements.bigCombo.unlocked = true;
+                showAchievement('Combo Master');
+            }
+        }
+
+        function showAchievement(name) {
+            const text = document.createElement('div');
+            text.textContent = `Achievement: ${name}!`;
+            text.style.position = 'absolute';
+            text.style.top = '20%';
+            text.style.left = '50%';
+            text.style.transform = 'translateX(-50%)';
+            text.style.color = '#FFD700';
+            text.style.fontSize = '30px';
+            text.style.textShadow = '0 0 10px #FFD700';
+            document.body.appendChild(text);
+            setTimeout(() => {
+                text.style.transition = 'opacity 1s';
+                text.style.opacity = '0';
+                setTimeout(() => text.remove(), 1000);
+            }, 2000);
+        }
+
+        function updateHighScores() {
+            highScores.push(score);
+            highScores.sort((a, b) => b - a);
+            highScores = highScores.slice(0, 5);
+            localStorage.setItem('highScores', JSON.stringify(highScores));
+            const highScoresElement = document.getElementById('high-scores');
+            if (highScoresElement) {
+                highScoresElement.innerHTML = 'High Scores:<br>' + highScores.map((s, i) => `${i + 1}. ${s}`).join('<br>');
+            } else {
+                console.error('High scores element not found');
+            }
+        }
+
+        // Game Logic
+        function preload() {
+            try {
+                GEM_TYPES.concat(SPECIAL_GEMS).forEach(type => {
+                    const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+                    graphics.fillStyle(GEM_COLORS[type], 1);
+                    if (type === 'star') {
+                        graphics.fillPoints([
+                            { x: 32, y: 0 }, { x: 40, y: 24 }, { x: 64, y: 24 },
+                            { x: 48, y: 40 }, { x: 56, y: 64 }, { x: 32, y: 48 },
+                            { x: 8, y: 64 }, { x: 16, y: 40 }, { x: 0, y: 24 },
+                            { x: 24, y: 24 }
+                        ]);
+                    } else if (type === 'rainbow') {
+                        graphics.fillStyle(0xFF0000, 1).fillRect(0, 0, 60, 15)
+                            .fillStyle(0xFFA500, 1).fillRect(0, 15, 60, 15)
+                            .fillStyle(0x00FF00, 1).fillRect(0, 30, 60, 15)
+                            .fillStyle(0x0000FF, 1).fillRect(0, 45, 60, 15);
+                    } else if (type === 'bomb') {
+                        graphics.fillCircle(30, 30, 25);
+                    } else if (type === 'timewarp') {
+                        graphics.fillStyle(0x00FFFF, 1).fillCircle(30, 30, 20)
+                            .fillStyle(0xFFFFFF, 0.5).fillCircle(30, 30, 10);
+                    } else {
+                        graphics.fillRect(0, 0, 60, 60);
+                    }
+
+                    graphics.fillStyle(0xffffff, 0.6);
+                    graphics.fillTriangle(10, 10, 20, 10, 10, 20);
+
+                    graphics.lineStyle(2, Phaser.Display.Color.ValueToColor(GEM_COLORS[type]).lighten(20).color, 1);
+                    graphics.lineBetween(0, 0, 60, 0);
+                    graphics.lineBetween(0, 0, 0, 60);
+                    graphics.lineStyle(2, Phaser.Display.Color.ValueToColor(GEM_COLORS[type]).darken(30).color, 1);
+                    graphics.lineBetween(60, 0, 60, 60);
+                    graphics.lineBetween(0, 60, 60, 60);
+
+                    graphics.fillStyle(0x000000, 0.3);
+                    graphics.fillRect(4, 4, 52, 52);
+
+                    graphics.generateTexture(type, 60, 60);
+
+                    if (!SPECIAL_GEMS.includes(type)) {
+                        graphics.clear();
+                        graphics.fillStyle(GEM_COLORS[type], 1);
+                        graphics.fillRect(0, 0, 60, 60);
+                        graphics.fillStyle(0xffffff, 0.8);
+                        graphics.fillCircle(30, 30, 15);
+                        graphics.generateTexture(type + '_hyper', 60, 60);
+                    }
+                });
+
+                const particleGraphics = this.make.graphics({ x: 0, y: 0, add: false });
+                particleGraphics.fillStyle(0xffffff, 1);
+                particleGraphics.fillCircle(4, 4, 4);
+                particleGraphics.generateTexture('particle', 8, 8);
+
+                particleGraphics.clear();
+                particleGraphics.fillStyle(0xFFD700, 1);
+                particleGraphics.fillPoints([{ x: 4, y: 0 }, { x: 6, y: 4 }, { x: 4, y: 8 }, { x: 0, y: 4 }]);
+                particleGraphics.generateTexture('glow', 8, 8);
+            } catch (error) {
+                console.error('Error in preload:', error, error.stack);
+            }
+        }
+
+        function create() {
+            try {
+                // Show canvas with delay to ensure Phaser initialization
+                setTimeout(() => {
+                    const canvas = document.querySelector('canvas');
+                    if (canvas) {
+                        canvas.style.display = 'block';
+                    } else {
+                        console.error('Canvas not found in create function');
+                    }
+                }, 100);
+
+                // Verify DOM elements
+                scoreText = document.getElementById('score-container');
+                levelText = document.getElementById('level-container');
+                timeText = document.getElementById('time-container');
+                modeText = document.getElementById('mode-selector');
+                comboText = document.getElementById('combo-text');
+                const muteButton = document.getElementById('mute-button');
+                if (!scoreText) console.error('Score container not found');
+                if (!levelText) console.error('Level container not found');
+                if (!timeText) console.error('Time container not found');
+                if (!modeText) console.error('Mode selector not found');
+                if (!comboText) console.error('Combo text not found');
+                if (!muteButton) console.error('Mute button not found');
+                else muteButton.addEventListener('click', toggleMute);
+
+                // Glowing grid background
+                const gridGraphics = this.add.graphics();
+                if (!gridGraphics) {
+                    console.error('Failed to create grid graphics');
+                    return;
+                }
+                gridGraphics.lineStyle(1, 0xFFD700, 0.2);
+                for (let i = 0; i <= GRID_SIZE; i++) {
+                    gridGraphics.lineBetween(i * TILE_SIZE, 0, i * TILE_SIZE, GRID_SIZE * TILE_SIZE);
+                    gridGraphics.lineBetween(0, i * TILE_SIZE, GRID_SIZE * TILE_SIZE, i * TILE_SIZE);
+                }
+                this.tweens.add({
+                    targets: gridGraphics,
+                    alpha: { from: 0.3, to: 0.6 },
+                    duration: 1500,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: 'Sine.easeInOut'
+                });
+
+                const bg = this.add.rectangle(320, 320, 640, 640, 0x000000, 0.2);
+                if (!bg) {
+                    console.error('Failed to create background rectangle');
+                    return;
+                }
+                this.tweens.add({
+                    targets: bg,
+                    alpha: 0.4,
+                    duration: 2000,
+                    yoyo: true,
+                    repeat: -1,
+                    ease: 'Sine.easeInOut'
+                });
+
+                particles = this.add.particles(0, 0, 'particle', {
+                    speed: { min: 150, max: 250 },
+                    angle: { min: 0, max: 360 },
+                    scale: { start: 0.8, end: 0 },
+                    alpha: { start: 1, end: 0 },
+                    lifespan: { min: 400, max: 600 },
+                    blendMode: 'ADD',
+                    quantity: 20,
+                    emitZone: { type: 'random', source: new Phaser.Geom.Circle(0, 0, 20) },
+                    on: false
+                });
+                if (!particles) console.error('Failed to create particles');
+
+                glowParticles = this.add.particles(0, 0, 'glow', {
+                    speed: { min: 50, max: 100 },
+                    angle: { min: 0, max: 360 },
+                    scale: { start: 0.5, end: 0 },
+                    alpha: { start: 0.8, end: 0 },
+                    lifespan: { min: 600, max: 800 },
+                    blendMode: 'ADD',
+                    frequency: 100,
+                    on: false
+                });
+                if (!glowParticles) console.error('Failed to create glow particles');
+
+                for (let row = 0; row < GRID_SIZE; row++) {
+                    board[row] = [];
+                    for (let col = 0; col < GRID_SIZE; col++) {
+                        let gemType = Phaser.Math.RND.weightedPick(GEM_TYPES.slice(0, Math.max(3, GEM_TYPES.length - level + 1)));
+                        let gem = this.add.sprite(col * TILE_SIZE + TILE_SIZE / 2, -TILE_SIZE, gemType);
+                        if (!gem) {
+                            console.error(`Failed to create gem at row ${row}, col ${col}`);
+                            continue;
+                        }
+                        gem.setInteractive();
+                        gem.setData('row', row);
+                        gem.setData('col', col);
+                        gem.setData('type', gemType);
+                        gem.setData('isHyper', false);
+                        gem.setData('isSpecial', false);
+                        board[row][col] = gem;
+                        this.tweens.add({
+                            targets: gem,
+                            y: row * TILE_SIZE + TILE_SIZE / 2,
+                            duration: 300,
+                            ease: 'Bounce.easeOut'
+                        });
+                        this.tweens.add({
+                            targets: gem,
+                            alpha: { from: 0.8, to: 1 },
+                            scale: { from: 0.95, to: 1 },
+                            duration: 1000,
+                            yoyo: true,
+                            repeat: -1,
+                            delay: Phaser.Math.RND.between(0, 2000)
+                        });
+                    }
+                }
+
+                resolveMatches.call(this, true);
+                this.input.on('gameobjectdown', onGemClicked, this);
+
+                if (gameMode === 'classic') {
+                    this.time.addEvent({
+                        delay: 1000,
+                        callback: updateTimer,
+                        callbackScope: this,
+                        loop: true
+                    });
+                }
+
+                // Ensure audio context is resumed
+                if (audioContext.state === 'suspended') {
+                    audioContext.resume().catch(error => console.error('Failed to resume audio context:', error));
+                }
+                playBackgroundMusic();
+
+                document.addEventListener('visibilitychange', () => {
+                    if (document.hidden) {
+                        audioContext.suspend().catch(error => console.error('Failed to suspend audio context:', error));
+                        stopBackgroundMusic();
+                    } else {
+                        audioContext.resume().catch(error => console.error('Failed to resume audio context:', error));
+                        playBackgroundMusic();
+                    }
+                });
+            } catch (error) {
+                console.error('Error in create function:', error, error.stack);
+            }
+        }
+
+        function updateTimer() {
+            if (gameOver) return;
+            timeLeft--;
+            if (timeText) timeText.innerText = 'Time: ' + timeLeft;
+            else console.error('Time text not found');
+            if (timeLeft <= 0 && gameMode === 'classic') {
+                showGameOver();
+            }
+        }
+
+        function showGameOver() {
+            gameOver = true;
+            stopBackgroundMusic();
+            audioContext.suspend().catch(error => console.error('Failed to suspend audio context:', error));
+            updateHighScores();
+            const finalScoreElement = document.getElementById('final-score');
+            const gameOverScreen = document.getElementById('game-over');
+            if (finalScoreElement) finalScoreElement.innerText = 'Final Score: ' + score;
+            else console.error('Final score element not found');
+            if (gameOverScreen) gameOverScreen.style.display = 'block';
+            else console.error('Game over screen not found');
+        }
+
+        function update() {
+            if (!isProcessing && !gameOver) {
+                resolveMatches.call(this);
+            }
+        }
+
+        function onGemClicked(pointer, gem) {
+            if (isProcessing || gameOver) return;
+
+            if (!selectedGem) {
+                selectedGem = gem;
+                selectedGem.setScale(1.3);
+                if (glowParticles) glowParticles.emitParticleAt(gem.x, gem.y, 5);
+            } else if (selectedGem === gem) {
+                selectedGem.setScale(1);
+                selectedGem = null;
+            } else {
+                let row1 = selectedGem.getData('row');
+                let col1 = selectedGem.getData('col');
+                let row2 = gem.getData('row');
+                let col2 = gem.getData('col');
+
+                if (Math.abs(row1 - row2) + Math.abs(col1 - col2) === 1) {
+                    swapGems.call(this, row1, col1, row2, col2);
+                }
+
+                selectedGem.setScale(1);
+                selectedGem = null;
+            }
+        }
+
+        function swapGems(row1, col1, row2, col2) {
+            isProcessing = true;
+            let gem1 = board[row1][col1];
+            let gem2 = board[row2][col2];
+
+            playSwapSound();
+
+            board[row1][col1] = gem2;
+            board[row2][col2] = gem1;
+
+            gem1.setData('row', row2);
+            gem1.setData('col', col2);
+            gem2.setData('row', row1);
+            gem2.setData('col', col1);
+
+            this.tweens.add({
+                targets: gem1,
+                x: col2 * TILE_SIZE + TILE_SIZE / 2,
+                y: row2 * TILE_SIZE + TILE_SIZE / 2,
+                duration: 200,
+                ease: 'Power1'
+            });
+
+            this.tweens.add({
+                targets: gem2,
+                x: col1 * TILE_SIZE + TILE_SIZE / 2,
+                y: row1 * TILE_SIZE + TILE_SIZE / 2,
+                duration: 200,
+                ease: 'Power1',
+                onComplete: () => {
+                    if (!checkMatches.call(this)) {
+                        playSwapSound();
+                        this.tweens.add({
+                            targets: gem1,
+                            x: col1 * TILE_SIZE + TILE_SIZE / 2,
+                            y: row1 * TILE_SIZE + TILE_SIZE / 2,
+                            duration: 200,
+                            ease: 'Power1'
+                        });
+                        this.tweens.add({
+                            targets: gem2,
+                            x: col2 * TILE_SIZE + TILE_SIZE / 2,
+                            y: row2 * TILE_SIZE + TILE_SIZE / 2,
+                            duration: 200,
+                            ease: 'Power1',
+                            onComplete: () => {
+                                board[row1][col1] = gem1;
+                                board[row2][col2] = gem2;
+                                gem1.setData('row', row1);
+                                gem1.setData('col', col1);
+                                gem2.setData('row', row2);
+                                gem2.setData('col', col2);
+                                isProcessing = false;
+                            }
+                        });
+                    } else {
+                        if (gem1.getData('isHyper') || gem2.getData('isHyper')) {
+                            let hyperGem = gem1.getData('isHyper') ? gem1 : gem2;
+                            let otherGem = gem1.getData('isHyper') ? gem2 : gem1;
+                            triggerHyperEffect.call(this, hyperGem, otherGem.getData('type'));
+                        } else if (gem1.getData('isSpecial') || gem2.getData('isSpecial')) {
+                            let specialGem = gem1.getData('isSpecial') ? gem1 : gem2;
+                            triggerSpecialEffect.call(this, specialGem);
+                        }
+                        resolveMatches.call(this);
+                        if (!achievements.firstMatch.unlocked) {
+                            achievements.firstMatch.unlocked = true;
+                            showAchievement('First Spark');
+                        }
+                    }
+                }
+            });
+        }
+
+        function triggerHyperEffect(hyperGem, matchType) {
+            let row = hyperGem.getData('row');
+            let col = hyperGem.getData('col');
+            for (let i = 0; i < GRID_SIZE; i++) {
+                if (board[row][i]) board[row][i].setData('matched', true);
+                if (board[i][col]) board[i][col].setData('matched', true);
+            }
+            score += 100;
+            playSpecialSound();
+            if (particles) particles.emitParticleAt(hyperGem.x, hyperGem.y, 30);
+            this.cameras.main.shake(100, 0.01);
+        }
+
+        function triggerSpecialEffect(specialGem) {
+            let row = specialGem.getData('row');
+            let col = specialGem.getData('col');
+            let type = specialGem.getData('type');
+            playSpecialSound();
+            if (particles) particles.emitParticleAt(specialGem.x, specialGem.y, 40);
+            this.cameras.main.shake(200, 0.015);
+
+            if (type === 'star') {
+                for (let r = row - 1; r <= row + 1; r++) {
+                    for (let c = col - 1; c <= col + 1; c++) {
+                        if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c]) {
+                            board[r][c].setData('matched', true);
+                        }
+                    }
+                }
+                score += 150;
+            } else if (type === 'rainbow') {
+                let targetType = Phaser.Math.RND.pick(GEM_TYPES);
+                for (let r = 0; r < GRID_SIZE; r++) {
+                    for (let c = 0; c < GRID_SIZE; c++) {
+                        if (board[r][c] && board[r][c].getData('type') === targetType) {
+                            board[r][c].setData('matched', true);
+                        }
+                    }
+                }
+                score += 200;
+            } else if (type === 'bomb') {
+                for (let r = row - 2; r <= row + 2; r++) {
+                    for (let c = col - 2; c <= col + 2; c++) {
+                        if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE && board[r][c]) {
+                            board[r][c].setData('matched', true);
+                        }
+                    }
+                }
+                score += 250;
+            } else if (type === 'timewarp') {
+                if (gameMode === 'classic') {
+                    timeLeft += 10;
+                    if (timeText) timeText.innerText = 'Time: ' + timeLeft;
+                    if (!achievements.timeMaster.unlocked) {
+                        achievements.timeMaster.unlocked = true;
+                        showAchievement('Time Lord');
+                    }
+                }
+                score += 150;
+            }
+        }
+
+        function checkMatches() {
+            let matchesFound = false;
+            let hyperGemsToCreate = [];
+            let specialGemsToCreate = [];
+
+            for (let row = 0; row < GRID_SIZE; row++) {
+                let count = 1;
+                let startCol = 0;
+                for (let col = 1; col < GRID_SIZE; col++) {
+                    if (!board[row][col] || !board[row][col - 1]) {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            let specialType = count === 4 ? 'star' : count === 5 ? 'rainbow' : count === 6 ? 'bomb' : count >= 7 ? 'timewarp' : null;
+                            if (specialType) {
+                                specialGemsToCreate.push({ row, col: startCol, type: specialType });
+                            } else if (count >= 4) {
+                                hyperGemsToCreate.push({ row, col: startCol, type: board[row][startCol].getData('type') });
+                            }
+                            for (let c = startCol; c < startCol + count; c++) {
+                                if (board[row][c]) board[row][c].setData('matched', true);
+                            }
+                        }
+                        count = 1;
+                        startCol = col;
+                        continue;
+                    }
+
+                    if (board[row][col].getData('type') === board[row][col - 1].getData('type')) {
+                        count++;
+                    } else {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            let specialType = count === 4 ? 'star' : count === 5 ? 'rainbow' : count === 6 ? 'bomb' : count >= 7 ? 'timewarp' : null;
+                            if (specialType) {
+                                specialGemsToCreate.push({ row, col: startCol, type: specialType });
+                            } else if (count >= 4) {
+                                hyperGemsToCreate.push({ row, col: startCol, type: board[row][startCol].getData('type') });
+                            }
+                            for (let c = startCol; c < startCol + count; c++) {
+                                if (board[row][c]) board[row][c].setData('matched', true);
+                            }
+                        }
+                        count = 1;
+                        startCol = col;
+                    }
+                }
+                if (count >= 3) {
+                    matchesFound = true;
+                    let specialType = count === 4 ? 'star' : count === 5 ? 'rainbow' : count === 6 ? 'bomb' : count >= 7 ? 'timewarp' : null;
+                    if (specialType) {
+                        specialGemsToCreate.push({ row, col: startCol, type: specialType });
+                    } else if (count >= 4) {
+                        hyperGemsToCreate.push({ row, col: startCol, type: board[row][startCol].getData('type') });
+                    }
+                    for (let c = startCol; c < startCol + count; c++) {
+                        if (board[row][c]) board[row][c].setData('matched', true);
+                    }
+                }
+            }
+
+            for (let col = 0; col < GRID_SIZE; col++) {
+                let count = 1;
+                let startRow = 0;
+                for (let row = 1; row < GRID_SIZE; row++) {
+                    if (!board[row][col] || !board[row - 1][col]) {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            let specialType = count === 4 ? 'star' : count === 5 ? 'rainbow' : count === 6 ? 'bomb' : count >= 7 ? 'timewarp' : null;
+                            if (specialType) {
+                                specialGemsToCreate.push({ row: startRow, col, type: specialType });
+                            } else if (count >= 4) {
+                                hyperGemsToCreate.push({ row: startRow, col, type: board[startRow][col].getData('type') });
+                            }
+                            for (let r = startRow; r < startRow + count; r++) {
+                                if (board[r][col]) board[r][col].setData('matched', true);
+                            }
+                        }
+                        count = 1;
+                        startRow = row;
+                        continue;
+                    }
+
+                    if (board[row][col].getData('type') === board[row - 1][col].getData('type')) {
+                        count++;
+                    } else {
+                        if (count >= 3) {
+                            matchesFound = true;
+                            let specialType = count === 4 ? 'star' : count === 5 ? 'rainbow' : count === 6 ? 'bomb' : count >= 7 ? 'timewarp' : null;
+                            if (specialType) {
+                                specialGemsToCreate.push({ row: startRow, col, type: specialType });
+                            } else if (count >= 4) {
+                                hyperGemsToCreate.push({ row: startRow, col, type: board[startRow][col].getData('type') });
+                            }
+                            for (let r = startRow; r < startRow + count; r++) {
+                                if (board[r][col]) board[r][col].setData('matched', true);
+                            }
+                        }
+                        count = 1;
+                        startRow = row;
+                    }
+                }
+                if (count >= 3) {
+                    matchesFound = true;
+                    let specialType = count === 4 ? 'star' : count === 5 ? 'rainbow' : count === 6 ? 'bomb' : count >= 7 ? 'timewarp' : null;
+                    if (specialType) {
+                        specialGemsToCreate.push({ row: startRow, col, type: specialType });
+                    } else if (count >= 4) {
+                        hyperGemsToCreate.push({ row: startRow, col, type: board[startRow][col].getData('type') });
+                    }
+                    for (let r = startRow; r < startRow + count; r++) {
+                        if (board[r][col]) board[r][col].setData('matched', true);
+                    }
+                }
+            }
+
+            this.hyperGemsToCreate = hyperGemsToCreate;
+            this.specialGemsToCreate = specialGemsToCreate;
+            return matchesFound;
+        }
+
+        function resolveMatches(initial = false) {
+            let matchesFound = checkMatches.call(this);
+            if (!matchesFound && !initial) {
+                isProcessing = false;
+                if (comboCount > 1 && comboText) {
+                    comboText.style.display = 'none';
+                }
+                comboCount = 0;
+                if (gameMode === 'classic' && score >= level * 1500) {
+                    levelUp.call(this);
+                }
+                updateAchievements();
+                return;
+            }
+
+            if (matchesFound) {
+                comboCount++;
+                playMatchSound(comboCount);
+                score += 25 * comboCount;
+                if (scoreText) scoreText.innerText = 'Score: ' + score;
+                else console.error('Score text not found');
+                if (comboCount > 1 && comboText) {
+                    comboText.textContent = `${comboCount}x Combo!`;
+                    comboText.style.display = 'block';
+                    comboText.style.left = '50%';
+                    comboText.style.top = '30%';
+                    comboText.style.transform = 'translateX(-50%)';
+                    this.tweens.add({
+                        targets: comboText,
+                        scale: { from: 1, to: 1.5 },
+                        alpha: { from: 1, to: 0 },
+                        duration: 1000,
+                        ease: 'Power2',
+                        onComplete: () => {
+                            if (comboText) {
+                                comboText.style.display = 'none';
+                                comboText.style.opacity = '1';
+                            }
+                        }
+                    });
+                }
+                const progressFill = document.getElementById('progress-fill');
+                if (progressFill) progressFill.style.width = `${Math.min((score % 1500) / 15, 100)}%`;
+                else console.error('Progress fill not found');
+            }
+
+            for (let row = 0; row < GRID_SIZE; row++) {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    let gem = board[row][col];
+                    if (gem && gem.getData('matched')) {
+                        if (particles) particles.emitParticleAt(gem.x, gem.y, 25);
+                        if (glowParticles) glowParticles.emitParticleAt(gem.x, gem.y, 10);
+                        playExplosionSound();
+                        this.tweens.add({
+                            targets: gem,
+                            scale: 0,
+                            alpha: 0,
+                            duration: 300,
+                            ease: 'Power3',
+                            onComplete: () => {
+                                gem.destroy();
+                            }
+                        });
+                        board[row][col] = null;
+                    }
+                }
+            }
+
+            this.time.delayedCall(400, () => {
+                for (let col = 0; col < GRID_SIZE; col++) {
+                    let emptySpaces = 0;
+                    for (let row = GRID_SIZE - 1; row >= 0; row--) {
+                        if (!board[row][col]) {
+                            emptySpaces++;
+                        } else if (emptySpaces > 0) {
+                            let gem = board[row][col];
+                            board[row + emptySpaces][col] = gem;
+                            board[row][col] = null;
+                            gem.setData('row', row + emptySpaces);
+                            this.tweens.add({
+                                targets: gem,
+                                y: (row + emptySpaces) * TILE_SIZE + TILE_SIZE / 2,
+                                duration: 300,
+                                ease: 'Bounce.easeOut'
+                            });
+                        }
+                    }
+
+                    for (let i = 0; i < emptySpaces; i++) {
+                        let row = emptySpaces - 1 - i;
+                        let gemType = Phaser.Math.RND.weightedPick(GEM_TYPES.slice(0, Math.max(3, GEM_TYPES.length - level + 1)));
+                        let isHyper = false;
+                        let isSpecial = false;
+                        let texture = gemType;
+
+                        let hyperGem = this.hyperGemsToCreate ? this.hyperGemsToCreate.find(h => h.row === row && h.col === col) : null;
+                        if (hyperGem) {
+                            isHyper = true;
+                            texture = gemType + '_hyper';
+                            this.hyperGemsToCreate = this.hyperGemsToCreate.filter(h => h !== hyperGem);
+                        }
+
+                        let specialGem = this.specialGemsToCreate ? this.specialGemsToCreate.find(s => s.row === row && s.col === col) : null;
+                        if (specialGem) {
+                            isSpecial = true;
+                            gemType = specialGem.type;
+                            texture = specialGem.type;
+                            this.specialGemsToCreate = this.specialGemsToCreate.filter(s => s !== specialGem);
+                        }
+
+                        let gem = this.add.sprite(col * TILE_SIZE + TILE_SIZE / 2, -TILE_SIZE, texture);
+                        if (!gem) {
+                            console.error(`Failed to create gem at row ${row}, col ${col}`);
+                            continue;
+                        }
+                        gem.setInteractive();
+                        gem.setData('row', row);
+                        gem.setData('col', col);
+                        gem.setData('type', gemType);
+                        gem.setData('isHyper', isHyper);
+                        gem.setData('isSpecial', isSpecial);
+                        board[row][col] = gem;
+                        this.tweens.add({
+                            targets: gem,
+                            y: row * TILE_SIZE + TILE_SIZE / 2,
+                            scale: { from: 0, to: 1 },
+                            duration: 300,
+                            ease: 'Back.easeOut'
+                        });
+
+                        if (isSpecial) {
+                            this.tweens.add({
+                                targets: gem,
+                                scale: { from: 1.2, to: 1 },
+                                duration: 500,
+                                yoyo: true,
+                                repeat: -1
+                            });
+                        }
+                    }
+                }
+
+                this.time.delayedCall(400, () => {
+                    if (checkMatches.call(this)) {
+                        resolveMatches.call(this);
+                    } else {
+                        isProcessing = false;
+                        if (comboCount > 1 && comboText) {
+                            comboText.style.display = 'none';
+                        }
+                        comboCount = 0;
+                        if (gameMode === 'classic' && score >= level * 1500) {
+                            levelUp.call(this);
+                        }
+                        updateAchievements();
+                    }
+                });
+            });
+        }
+
+        function levelUp() {
+            level++;
+            timeLeft = gameMode === 'classic' ? 60 : Infinity;
+            if (levelText) levelText.innerText = 'Level: ' + level;
+            else console.error('Level text not found');
+            if (timeText) timeText.innerText = 'Time: ' + timeLeft;
+            else console.error('Time text not found');
+            playLevelUpSound();
+            const progressFill = document.getElementById('progress-fill');
+            if (progressFill) progressFill.style.width = '0%';
+            else console.error('Progress fill not found');
+            if (level <= 3) {
+                GEM_TYPES.splice(-1, 1);
+            }
+            const text = this.add.text(320, 320, `Level ${level}!`, {
+                fontSize: '64px',
+                color: '#FFD700',
+                fontFamily: 'Segoe UI',
+                shadow: { offsetX: 0, offsetY: 0, blur: 10, color: '#FFD700' }
+            }).setOrigin(0.5);
+            if (!text) {
+                console.error('Failed to create level-up text');
+                return;
+            }
+            this.tweens.add({
+                targets: text,
+                scale: { from: 1, to: 1.5 },
+                alpha: { from: 1, to: 0 },
+                duration: 1000,
+                ease: 'Power2',
+                onComplete: () => text.destroy()
+            });
+            this.cameras.main.shake(300, 0.02);
+        }
+
+        // Initialize start screen
+        showStartScreen();
+    </script>
+</body>
+</html>
